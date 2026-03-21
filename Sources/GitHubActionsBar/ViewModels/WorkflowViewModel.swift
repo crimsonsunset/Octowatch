@@ -247,29 +247,26 @@ final class WorkflowViewModel {
     }
 
     private func computeAggregateStatus(_ runs: [WorkflowRun]) -> AggregateStatus {
-        let latest = latestRunPerWorkflow(runs)
-        guard !latest.isEmpty else { return .idle }
+        guard !runs.isEmpty else { return .idle }
 
-        // Only consider workflows that ran recently (within 24h of the most recent run).
-        // This prevents stale failures from old workflows dragging the status to red.
-        guard let mostRecentDate = latest.map(\.updatedAt).max() else { return .idle }
-        let recentRuns = latest.filter {
-            mostRecentDate.timeIntervalSince($0.updatedAt) < 24 * 3600
-        }
-        let runsToConsider = recentRuns.isEmpty ? latest : recentRuns
+        let sorted = runs.sorted { $0.updatedAt > $1.updatedAt }
+        guard let latest = sorted.first else { return .idle }
 
-        let hasInProgress = runsToConsider.contains {
-            $0.status == .inProgress || $0.status == .queued
+        // Status is driven by the most recent run across all workflows.
+        // Individual workflow failures remain visible in the run list.
+        if latest.status == .inProgress || latest.status == .queued {
+            return .inProgress
         }
-        let hasFailed = runsToConsider.contains {
-            $0.conclusion == .failure || $0.conclusion == .timedOut
-        }
-        let hasSuccess = runsToConsider.contains { $0.conclusion == .success }
 
-        if hasInProgress { return .inProgress }
-        if hasFailed && hasSuccess { return .mixed }
-        if hasFailed { return .failed }
-        if hasSuccess { return .allGreen }
+        if latest.conclusion == .success {
+            return .allGreen
+        }
+
+        if latest.conclusion == .failure || latest.conclusion == .timedOut {
+            let hasRecentSuccess = sorted.prefix(5).contains { $0.conclusion == .success }
+            return hasRecentSuccess ? .mixed : .failed
+        }
+
         return .idle
     }
 
